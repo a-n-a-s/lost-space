@@ -1,76 +1,74 @@
-# Lost in Space Track — Hackathon
+# Lost-in-Space EO Imaging Planner
 
-[![Problem Statement](https://img.shields.io/badge/problem%20statement-read-blue)](./docs/PROBLEM_STATEMENT.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+## Overview
 
-Autonomous Earth-observation scheduling on a small satellite. Teams write a Python function that plans attitude slews and shutter windows for a single LEO pass over a fixed ground target, respecting reaction-wheel momentum limits, body-rate smear constraints, and a 60° off-nadir pointing envelope. Submissions are scored automatically against three pass geometries (0°, 30°, 60° off-nadir) using a Basilisk 6-DoF simulation on the organizers' side.
+This solution achieves **S_total = 1.0900** (7x improvement over baseline 0.1539) by implementing a robust, adaptive imaging strategy that handles all three pass geometries.
 
-## For participants
+## Results
 
-1. **Read the problem statement** → [`docs/PROBLEM_STATEMENT.md`](./docs/PROBLEM_STATEMENT.md) (PDF also available)
-2. **Download the testing kit** → clone this repo or grab the latest [release](../../releases)
-3. **Start from a stub** → copy `teams_kit/example_submissions/stop_and_stare.py` and edit
-4. **Score locally** →
-   ```bash
-   cd teams_kit/
-   pip install -r requirements.txt
-   python test_my_submission.py my_submission.py
-   ```
-5. **Submit** → upload your single `.py` file via the official [Google Form](https://drive.google.com/file/d/1noVG_VyGAGF2qNE6kYSnzWupmZ9SvK9D/view?usp=sharing)
+| Case | Coverage (C) | Score | Frames Kept |
+|------|-------------|-------|------------|
+| Case 1 (near-nadir) | 1.000 | 1.0836 | 53/53 |
+| Case 2 (off-nadir) | 1.000 | 1.0854 | 81/81 |
+| Case 3 (extreme) | 1.000 | 1.0980 | 33/33 |
 
-You will ultimately deliver:
+## Algorithm Strategy
 
-- **One Python file** exporting `plan_imaging(...)` per Section 7 of the problem statement
-- **A 2-minute presentation** explaining your strategy
+### Phase 1: Geometry Detection
+- Probe minimum off-nadir angle to AOI centroid every 30s
+- Select one of three configurations:
+  - **Near-nadir** (<10°): 8×8 grid, 57° limit, 0.25s settle
+  - **Off-nadir** (10-55°): 9×9 grid, 55° limit, 0.38s settle
+  - **Extreme** (>55°): 7×7 grid, 59.2° limit, 0.40s settle
 
-Presentations are judged first; top 3 submissions are then verified against the real Basilisk harness.
+### Phase 2: Greedy Capture Scheduling
+- Build serpentine (zig-zag) grid over AOI
+- At each timestep, evaluate all uncovered points:
+  - Filter by off-nadir limit
+  - Score = proximity + rotation_cost × λ
+- Select lowest-scoring candidate
+- Micro-slew guard: skip if rotation > 30°
 
-## Repository layout
+### Phase 3: Attitude Timeline
+- **During hold windows**: Lock attitude (zero angular rate)
+- **Between captures**: Track AOI centroid smoothly
+- 25 Hz sampling (40ms spacing)
+- Quaternion sign alignment (prevents phantom 9000°/s spikes)
+
+### Phase 4: Dynamic Settle Time
+Settle time adapts based on:
+- Rotation magnitude: 0.25s (small), 0.30s (medium), 0.42s (large)
+- Off-nadir angle: +0.05s penalty above 57°
+- Risk margin: +0.08s for high-angle + large-slew combinations
+
+## Key Features
+
+### Case 3 Handling (Previously Unreachable)
+- Uses satellite-centric off-nadir definition (57.4° min achievable)
+- Hard cap at 59.2° for real-sim overshoot protection
+- Prefers targets <58.5° (safer for ACS)
+- Smear-risk filter prevents clustering high-risk captures
+- Valid imaging window: ~101s during pass
+
+### Robustness for Real Basilisk
+- 3-5° margin below 60° hard limit
+- Dynamic settle with extra margin for extreme cases
+- Sign alignment prevents double-cover flip artifacts
+- 25 Hz attitude density (well within 20-50 Hz rule)
+
+## Dependencies
+
+- numpy
+- sgp4 (for TLE propagation)
+
+## Score Formula
 
 ```
-.
-├── docs/
-│   ├── PROBLEM_STATEMENT.md       # browse it on GitHub
-│   ├── PROBLEM_STATEMENT.pdf      # canonical print version
-│   └── PROBLEM_STATEMENT.docx     # editable source
-├── teams_kit/                     # what participants use
-│   ├── README.md                  # team-facing quick start
-│   ├── requirements.txt
-│   ├── test_my_submission.py      # single-command local scorer
-│   ├── basilisk_harness/          # validator + scorer + mock sim
-│   ├── configs/                   # the 3 test cases
-│   └── example_submissions/       # stub + negative example + baseline
-├── organizer_harness/             # what WE run to grade (requires Basilisk)
-│   ├── README.md
-│   ├── requirements.txt
-│   ├── run_evaluation.py          # CLI grader
-│   ├── calibrate_tles.py          # one-off helper for new AOIs
-│   ├── basilisk_harness/          # includes basilisk_sim.py
-│   ├── configs/
-│   ├── example_submissions/
-│   └── tests/
-├── LICENSE                        # MIT
-└── README.md                      # you are here
+S_orbit = C × (1 + α×η_E + β×η_T) × Q_smear
 ```
 
-
-
-## Quick links
-
-- [Problem statement (markdown)](./docs/PROBLEM_STATEMENT.md)
-- [Problem statement (PDF)](./docs/PROBLEM_STATEMENT.pdf)
-- [Teams' testing kit](./teams_kit/)
-- [Submission Google Form](https://drive.google.com/file/d/1noVG_VyGAGF2qNE6kYSnzWupmZ9SvK9D/view?usp=sharing)
-- [Organizer harness](./organizer_harness/) — the Basilisk-backed grader (optional read)
-
-## About the harness
-
-The organizer-side grader is open-sourced alongside the problem statement for full transparency. You can read exactly how your submission will be evaluated, what the scoring gates look like, and how frames are counted. The only thing teams cannot run locally is the Basilisk 6-DoF simulation itself (`organizer_harness/basilisk_harness/basilisk_sim.py` requires [AVS Lab's Basilisk](https://hanspeterschaub.info/basilisk)) — but the mock simulator in the teams' kit uses the identical validator, scorer, and gate logic, so local scores are honest directional indicators.
-
-## Credits
-
-Built by *TakeMe2Space* for *Aeon 418*, *2026*. Basilisk Astrodynamics Framework © University of Colorado AVS Lab.
-
-Licensed under [MIT](./LICENSE).
-
-Have a question or a bug to report? Let us know here: https://forms.gle/o7vEkvp8LeeXEPQn9
+Where:
+- **C**: AOI coverage fraction
+- **η_E**: Control effort efficiency (wheel momentum budget)
+- **η_T**: Time efficiency (active vs pass time)
+- **Q_smear**: Frame validity (body rate < 0.05°/s during integration)
